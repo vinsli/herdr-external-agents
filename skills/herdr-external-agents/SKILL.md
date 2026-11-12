@@ -32,7 +32,7 @@ external_worker({ action: "cancel", pane })
 
 登记过的 pane 由本扩展自己收尾：`working → done|idle` 时向当前会话注入 `[worker done] …`
 （`triggerTurn` 会唤醒它），随后默认关 pane；`blocked` 时注入 `[worker blocked] …` 并保留 pane；
-pane 先消失则静默注销（取消不是完成）。
+pane 先消失则注入 `[worker gone] …` 并注销（不算成功；`cancel` 会先中止 watcher，不会走到这条）。
 
 ## 依赖（本机已满足）
 

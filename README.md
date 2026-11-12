@@ -70,7 +70,7 @@ external_worker  start()  ── 建 pane、派活、登记 workers.json
                               idle|done + armed → [worker done] 消息（triggerTurn 唤醒会话）
                                                     + 默认 pane close
                               blocked → [worker blocked] 消息（附批准命令，pane 保留）
-                              pane 消失 → 静默注销，不报成功（取消≠完成）
+                              pane 消失 → [worker gone] 消息 + 注销（不算成功；主动 cancel 会先中止 watcher，不会走到这里）
 ```
 
 为什么不让 herdr 做：Herdr 是通用终端宿主，不该知道 pi / pi-intercom 的存在。

@@ -56,18 +56,20 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
     void watchWorker(run, pane, {
       signal: controller.signal,
       onEvent: async (event: WatchEvent) => {
-        const label = event.kind === "done" ? `[worker done] ${pane}` : event.kind === "blocked" ? `[worker blocked] ${pane}` : `[worker gone] ${pane}`;
+        const label =
+          event.kind === "done" ? `[worker done] ${pane}` : event.kind === "blocked" ? `[worker blocked] ${pane}` : `[worker gone] ${pane}`;
         const detail =
           event.kind === "done"
             ? `status=${event.status}${event.title ? ` title="${event.title}"` : ""}`
             : event.kind === "blocked"
               ? `approve with: herdr pane send-keys ${pane} Enter`
-              : "pane disappeared; treated as settled, not as success";
+              : "pane disappeared before reporting completion (crashed, or closed elsewhere); not counted as success";
 
         if (event.kind === "pane-gone") {
+          // Cancel aborts the watcher first, so a pane-gone observed here means the worker
+          // died or someone else closed it: report it, but never claim success.
           unregisterWorker(pane);
           watchers.delete(pane);
-          return;
         }
 
         if (event.kind === "done" && options.autoclose !== false) {

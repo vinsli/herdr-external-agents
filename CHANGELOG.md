@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- `pane-gone` 不再静默：worker 进程崩了或 pane 被别处关掉时注入 `[worker gone] …`（不算成功、不关 pane）。
+  用户主动 `cancel` 会先中止 watcher，因此不会触发这条。
+
 ## 1.1.0
 
 收尾逻辑从 herdr 插件搬回 pi 扩展：Herdr 保持通用终端宿主，不依赖 pi / pi-intercom。
