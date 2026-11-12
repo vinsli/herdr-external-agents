@@ -9,6 +9,7 @@ import {
   cancelWorker,
   readPane,
   readRegistry,
+  reapSubagentTab,
   registryPath,
   promptWithRetry,
   startWorker,
@@ -37,6 +38,23 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
   const watchers = new Map<string, AbortController>();
 
   /** Append-only trace: who started, who finished, who closed the pane, who vanished. */
+  /** The tab belongs to the workspace the dispatcher runs in, so workers of `w2` stay in `w2`. */
+  function currentWorkspace(): string | undefined {
+    return process.env.HERDR_WORKSPACE_ID || undefined;
+  }
+
+  /**
+   * Reap the shared `subagents` tab once its last worker is gone: the tab exists only
+   * while workers do, so it must not outlive them as an empty shell.
+   */
+  async function reapTab(pane: string, tab: string | undefined) {
+    if (!tab) return;
+    const remaining = Object.entries(readRegistry()).some(([other, entry]) => entry.tab === tab && other !== pane);
+    if (remaining) return;
+    const reaped = await reapSubagentTab(run, { tab }).catch(() => false);
+    if (reaped) logEvent({ pane, event: "tab-reaped", tab });
+  }
+
   function logEvent(entry: Record<string, unknown>) {
     try {
       appendFileSync(`${stateDir()}/events.log`, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
@@ -79,17 +97,21 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         if (event.kind === "pane-gone") {
           // Cancel aborts the watcher first, so a pane-gone observed here means the worker
           // died or someone else closed it: report it, but never claim success.
+          const goneTab = readRegistry()[pane]?.tab;
           unregisterWorker(pane);
           watchers.delete(pane);
           controller.abort();
           logEvent({ pane, event: "pane-gone" });
+          void reapTab(pane, goneTab);
         }
 
         if (event.kind === "done") {
+          const doneTab = readRegistry()[pane]?.tab;
           logEvent({ pane, event: "done", status: event.status, closed: options.autoclose !== false });
           if (options.autoclose !== false) await cancelWorker(run, pane).catch(() => undefined);
           watchers.delete(pane);
           controller.abort();
+          if (options.autoclose !== false) void reapTab(pane, doneTab);
         }
         // blocked is not terminal: keep watching so the approval still ends with [worker done].
 
@@ -226,8 +248,10 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         const pane = requirePane();
         watchers.get(pane)?.abort();
         watchers.delete(pane);
+        const cancelledTab = readRegistry()[pane]?.tab;
         logEvent({ pane, event: "cancelled" });
         const result = await cancelWorker(run, pane, { signal });
+        await reapTab(pane, cancelledTab);
         return {
           content: [{ type: "text", text: `closed ${pane} (closed=${result.closed})` }],
           details: { pane, ...result },
@@ -253,6 +277,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         autoclose: params.noClose ? false : true,
         keepPrompt: params.keepPrompt,
         createTab: params.createTab,
+        workspace: currentWorkspace(),
         signal,
         onProgress: (text) => onUpdate?.({ content: [{ type: "text", text }], details: {} }),
       });

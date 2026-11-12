@@ -22,6 +22,8 @@ export type WorkerEntry = {
   task?: string;
   autoclose?: boolean;
   cwd?: string;
+  /** Tab this worker was placed in; the tab is reaped once no worker is left in it. */
+  tab?: string;
   started?: string;
   seen?: { working?: boolean; blocked?: boolean; idleBeforeWork?: boolean };
   /** Set once a turn is observed to start. Only an armed worker reports completion,
@@ -60,7 +62,8 @@ export function decideWatchEvent(
   return null;
 }
 
-export const SUBAGENT_TAB_LABEL = "subagent";
+/** One tab per workspace, shared by every worker dispatched from that workspace. */
+export const SUBAGENT_TAB_LABEL = "subagents";
 export const COMPOSER_MATCH: Record<WorkerKind, string> = {
   codely: "Type your message",
   codex: "Ask Codex to do anything",
@@ -207,31 +210,60 @@ async function jsonRun(run: Runner, args: string[], options?: { timeout?: number
 
 export async function findSubagentTab(
   run: Runner,
-  options?: { create?: boolean; label?: string; signal?: AbortSignal },
+  options?: { create?: boolean; label?: string; workspace?: string; signal?: AbortSignal },
 ): Promise<{ tab: string; root: string; created: boolean }> {
   const label = options?.label ?? SUBAGENT_TAB_LABEL;
+  const workspace = options?.workspace;
+  const matches = (tabs: any[]) =>
+    tabs.find((tab: any) => tab.label === label && (!workspace || tab.workspace_id === workspace));
+
   const list = await jsonRun(run, ["tab", "list"], { signal: options?.signal });
-  const existing = (list?.result?.tabs ?? []).find((tab: any) => tab.label === label);
-  let tab: string | undefined = existing?.tab_id;
+  let tab: string | undefined = matches(list?.result?.tabs ?? [])?.tab_id;
   let created = false;
 
   if (!tab && options?.create) {
-    const made = await jsonRun(run, ["tab", "create", "--label", label, "--no-focus"], { signal: options?.signal });
+    // The tab lives in the dispatching workspace: a worker started from `w2` must land
+    // in `w2`'s tab, never in whichever workspace happened to be focused.
+    const args = ["tab", "create", "--label", label, "--no-focus"];
+    if (workspace) args.push("--workspace", workspace);
+    const made = await jsonRun(run, args, { signal: options?.signal });
     tab = made?.result?.root_pane?.tab_id ?? made?.result?.tab?.tab_id;
     created = true;
     if (!tab) {
       const again = await jsonRun(run, ["tab", "list"], { signal: options?.signal });
-      tab = (again?.result?.tabs ?? []).find((t: any) => t.label === label)?.tab_id;
+      tab = matches(again?.result?.tabs ?? [])?.tab_id;
     }
   }
   if (!tab) {
-    throw new Error(`no "${label}" tab; create it once: herdr tab create --label ${label} --no-focus`);
+    throw new Error(
+      `no "${label}" tab in workspace ${workspace ?? "(current)"}; create it once: ` +
+        `herdr tab create --label ${label}${workspace ? ` --workspace ${workspace}` : ""} --no-focus`,
+    );
   }
 
   const panes = await jsonRun(run, ["pane", "list"], { signal: options?.signal });
   const root = (panes?.result?.panes ?? []).find((pane: any) => pane.tab_id === tab)?.pane_id;
   if (!root) throw new Error(`tab ${tab} has no pane`);
   return { tab, root, created };
+}
+
+/**
+ * Close the shared tab once it holds no agent at all. The tab is ours: it exists only
+ * while workers do, so it disappears with the last one instead of leaving an idle shell.
+ */
+export async function reapSubagentTab(
+  run: Runner,
+  options: { tab: string; signal?: AbortSignal },
+): Promise<boolean> {
+  const panes = await jsonRun(run, ["pane", "list"], { signal: options.signal }).catch(() => null);
+  if (!panes) return false;
+  const inTab = (panes?.result?.panes ?? []).filter((pane: any) => pane.tab_id === options.tab);
+  if (inTab.length === 0) return false;
+  if (inTab.some((pane: any) => pane.agent)) return false;
+  const closed = await run("herdr", ["tab", "close", options.tab], { timeout: 15_000, signal: options.signal }).catch(
+    () => ({ code: 1 } as RunResult),
+  );
+  return closed.code === 0;
 }
 
 export async function splitWorkerPane(
@@ -487,6 +519,7 @@ export type StartOptions = {
   autoclose?: boolean;
   keepPrompt?: boolean;
   tabLabel?: string;
+  workspace?: string;
   createTab?: boolean;
   registry?: string;
   signal?: AbortSignal;
@@ -516,6 +549,7 @@ export async function startWorker(run: Runner, options: StartOptions): Promise<S
   const { tab, root, created } = await findSubagentTab(run, {
     create: options.createTab ?? false,
     label: options.tabLabel,
+    workspace: options.workspace,
     signal: options.signal,
   });
   if (created) warnings.push(`created tab "${options.tabLabel ?? SUBAGENT_TAB_LABEL}"`);
@@ -533,6 +567,7 @@ export async function startWorker(run: Runner, options: StartOptions): Promise<S
       task: options.task.slice(0, 200),
       autoclose: options.autoclose !== false,
       cwd: options.cwd,
+      tab,
       started: new Date().toISOString(),
     },
     registry,

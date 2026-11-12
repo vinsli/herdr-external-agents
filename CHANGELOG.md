@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.3
+
+- tab 改为按 **workspace 归属**：派活的 pi 在 `w2`，worker 就落在 `w2` 的 `subagents` tab，不再跟随焦点 workspace。
+- tab 名统一为 **`subagents`**（复数），兼容旧的单数名会让位给新 tab。
+- **tab 随最后一个 worker 结束自动关闭**（`tab-reaped` 事件），不留空 shell。
+
 ## 1.1.2
 
 - `blocked` 不再中止 watcher：批准后仍会收到 `[worker done]`。

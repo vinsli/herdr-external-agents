@@ -1,6 +1,6 @@
 ---
 name: herdr-external-agents
-description: 把有边界的任务派给外部编码 agent（codely / codex / 常驻 pi 会话），并取回可验收的结果。触发词：派活、worker、codely、codex、agent prompt、external_worker、只读侦察、reviewer、researcher、watchdog、worker 报告、handoff 文件、subagent tab。日常派活直接用 external_worker 工具；本 skill 只讲判断与坑（何时派、权限怎么给、结果怎么判、失败怎么归因）。本包不定义 agent 角色，角色提示词由项目或其他包提供。
+description: 把有边界的任务派给外部编码 agent（codely / codex / 常驻 pi 会话），并取回可验收的结果。触发词：派活、worker、codely、codex、agent prompt、external_worker、只读侦察、reviewer、researcher、watchdog、worker 报告、handoff 文件、subagents tab。日常派活直接用 external_worker 工具；本 skill 只讲判断与坑（何时派、权限怎么给、结果怎么判、失败怎么归因）。本包不定义 agent 角色，角色提示词由项目或其他包提供。
 ---
 
 # 外部 agent 派工：判断与坑
@@ -88,7 +88,7 @@ herdr pane close "$P"
 ```
 
 - **`PATH=/opt/homebrew/bin:$PATH` 必给**：交互式 zsh 里 DevEco 的 Node 18 会盖住 Homebrew Node 26，codely / 任何 Node 工具会静默卡死或秒退（同一命令在非交互 shell 里正常）。
-- `herdr pane move <pane> --tab <TAB> --split down` 可以把主 tab 里已在跑的 agent 原地搬进 subagent tab，进程不重启。
+- `herdr pane move <pane> --tab <TAB> --split down` 可以把主 tab 里已在跑的 agent 原地搬进 `subagents` tab，进程不重启。
 - `herdr tab create` 自带一个 root shell pane，worker 都 `split --pane <ROOT>`，收尾只关 worker pane，别关 root。
 
 ## Pitfalls

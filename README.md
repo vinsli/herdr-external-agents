@@ -1,6 +1,6 @@
 # herdr-external-agents
 
-Pi 扩展：用一条工具调用把外部编码 agent（`codely` / `codex`）派进 Herdr 的 `subagent` tab，
+Pi 扩展：用一条工具调用把外部编码 agent（`codely` / `codex`）派进 Herdr 的 `subagents` tab，
 拿到可验收的结果，并在干完时收到通知、自动关 pane。
 
 只解决**调用外部 agent**这一件事：不定义 agent 角色，也不内置任何角色提示词
@@ -22,7 +22,7 @@ external_worker({ action: "prompt", pane, task })
 external_worker({ action: "cancel", pane })
 ```
 
-`start` 的动作顺序：在 `subagent` tab 里 split pane → 起 agent → 等它被识别成 named agent →
+`start` 的动作顺序：在 `subagents` tab 里 split pane → 起 agent → 等它被识别成 named agent →
 等 TUI 画出输入框 → 送任务并确认真的开跑 → 写进注册表 `~/.local/state/herdr-worker/workers.json`。
 
 ## 硬依赖

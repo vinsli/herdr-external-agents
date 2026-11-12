@@ -7,7 +7,9 @@ import {
   cancelWorker,
   decideWatchEvent,
   ensureCodexTrust,
+  findSubagentTab,
   launchCommand,
+  reapSubagentTab,
   promptWithRetry,
   readRegistry,
   startWorker,
@@ -42,7 +44,7 @@ function fakeHerdr(options: FakeOptions = {}) {
     if (command !== "herdr") throw new Error(`unexpected command ${command}`);
 
     if (group === "tab" && verb === "list") {
-      return json({ result: { tabs: [{ tab_id: "w1:t1", label: "subagent" }] } });
+      return json({ result: { tabs: [{ tab_id: "w1:t1", label: "subagents", workspace_id: "w1" }] } });
     }
     if (group === "pane" && verb === "list") {
       return json({ result: { panes: [{ pane_id: "w1:p1", tab_id: "w1:t1" }, { pane_id: "w1:p9", tab_id: "w1:t9" }] } });
@@ -338,4 +340,108 @@ test("watchWorker returns immediately for an unregistered pane", async () => {
   const fake = fakeWatcher(["idle"]);
   const event = await watchWorker(fake.run, "w1:p2", { registryFile: registry, pollMs: 1, maxPolls: 2 });
   assert.equal(event, null);
+});
+
+test("findSubagentTab picks the dispatching workspace's tab, not another workspace's", async () => {
+  const seen: string[][] = [];
+  const run: Runner = async (command, args) => {
+    seen.push([command, ...args]);
+    if (args[0] === "tab" && args[1] === "list") {
+      return {
+        stdout: JSON.stringify({
+          result: {
+            tabs: [
+              { tab_id: "wS:t1", label: "subagents", workspace_id: "wS" },
+              { tab_id: "w2:t9", label: "subagents", workspace_id: "w2" },
+            ],
+          },
+        }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    if (args[0] === "pane" && args[1] === "list") {
+      return {
+        stdout: JSON.stringify({ result: { panes: [{ pane_id: "w2:p9", tab_id: "w2:t9" }] } }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    throw new Error(`unexpected ${args.join(" ")}`);
+  };
+
+  const found = await findSubagentTab(run, { workspace: "w2", create: true });
+  assert.equal(found.tab, "w2:t9");
+  assert.equal(found.root, "w2:p9");
+  assert.equal(seen.some((call) => call.includes("create")), false, "must reuse the existing tab");
+});
+
+test("findSubagentTab creates the tab inside the requested workspace", async () => {
+  const seen: string[][] = [];
+  let created = false;
+  const run: Runner = async (command, args) => {
+    seen.push([command, ...args]);
+    if (args[0] === "tab" && args[1] === "list") {
+      return {
+        stdout: JSON.stringify({
+          result: { tabs: created ? [{ tab_id: "w2:t5", label: "subagents", workspace_id: "w2" }] : [] },
+        }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    if (args[0] === "tab" && args[1] === "create") {
+      created = true;
+      return {
+        stdout: JSON.stringify({ result: { root_pane: { pane_id: "w2:p1", tab_id: "w2:t5" } } }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    if (args[0] === "pane" && args[1] === "list") {
+      return {
+        stdout: JSON.stringify({ result: { panes: [{ pane_id: "w2:p1", tab_id: "w2:t5" }] } }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    throw new Error(`unexpected ${args.join(" ")}`);
+  };
+
+  const found = await findSubagentTab(run, { workspace: "w2", create: true });
+  assert.equal(found.created, true);
+  const createCall = seen.find((call) => call.includes("create"))!;
+  assert.deepEqual(createCall.slice(2), [
+    "create",
+    "--label",
+    "subagents",
+    "--no-focus",
+    "--workspace",
+    "w2",
+  ]);
+});
+
+test("reapSubagentTab closes the tab only when no agent is left in it", async () => {
+  const build = (panes: unknown[]) => {
+    const calls: string[][] = [];
+    const run: Runner = async (command, args) => {
+      calls.push([command, ...args]);
+      if (args[0] === "pane" && args[1] === "list") {
+        return { stdout: JSON.stringify({ result: { panes } }), stderr: "", code: 0 };
+      }
+      if (args[0] === "tab" && args[1] === "close") {
+        return { stdout: JSON.stringify({ result: {} }), stderr: "", code: 0 };
+      }
+      throw new Error(`unexpected ${args.join(" ")}`);
+    };
+    return { run, calls };
+  };
+
+  const busy = build([{ pane_id: "w1:p1", tab_id: "w1:t1" }, { pane_id: "w1:p2", tab_id: "w1:t1", agent: "codely" }]);
+  assert.equal(await reapSubagentTab(busy.run, { tab: "w1:t1" }), false);
+  assert.equal(busy.calls.some((call) => call.includes("close")), false);
+
+  const idle = build([{ pane_id: "w1:p1", tab_id: "w1:t1" }]);
+  assert.equal(await reapSubagentTab(idle.run, { tab: "w1:t1" }), true);
+  assert.ok(idle.calls.some((call) => call.includes("close") && call.includes("w1:t1")));
 });
