@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.6
+
+- `resolveWorkspace()` 顺序改为 **pane 的实时位置** → `HERDR_WORKSPACE_ID` → focused。
+  env 是进程启动时快照，把 pi 的 pane 搬到别的 workspace（或 herdr 重启换 workspace）后就不准了；
+  实时位置才是「派活的 agent 同 workspace」的语义。
+
 ## 1.1.5
 
 - workspace 解析改成 `resolveWorkspace()`：`HERDR_WORKSPACE_ID` → 本 pane 所属 workspace（`HERDR_PANE_ID`）→ focused workspace。

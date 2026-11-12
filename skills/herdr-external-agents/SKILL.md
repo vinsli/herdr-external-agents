@@ -77,7 +77,7 @@ pi 角色会话没有沙箱，只读靠 prompt + 不给写工具；需要硬隔�
 ## 手写 herdr 命令的场景（工具覆盖不到时）
 
 ```bash
-WS=${HERDR_WORKSPACE_ID:-$(herdr pane get "$HERDR_PANE_ID" | jq -r '.result.pane.workspace_id')}  # 派活的 pi 所在 workspace
+WS=$(herdr pane get "$HERDR_PANE_ID" | jq -r '.result.pane.workspace_id')  # 派活的 pi 此刻所在 workspace（env 可能过期）
 TAB=$(herdr tab list | jq -r --arg w "$WS" '.result.tabs[]|select(.label=="subagents" and .workspace_id==$w)|.tab_id')
 ROOT=$(herdr pane list | jq -r --arg t "$TAB" '.result.panes[]|select(.tab_id==$t)|.pane_id' | head -1)
 P=$(herdr pane split --pane "$ROOT" --direction down --no-focus | jq -r '.result.pane.pane_id // .result.root_pane.pane_id')

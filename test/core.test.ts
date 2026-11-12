@@ -471,13 +471,14 @@ test("resolveWorkspace follows the dispatching agent, not a fixed id", async () 
     throw new Error(`unexpected ${args.join(" ")}`);
   };
 
-  // 1. explicit env wins (that is where pi runs)
-  assert.equal(await resolveWorkspace(run, { env: { HERDR_WORKSPACE_ID: "w2" } }), "w2");
+  // 1. the pane's live location wins over a stale env value (pane was moved)
+  assert.equal(
+    await resolveWorkspace(run, { env: { HERDR_PANE_ID: "w9:p4", HERDR_WORKSPACE_ID: "w2" } }),
+    "w9",
+  );
 
-  // 2. env missing: the workspace owning this pane
-  calls = [];
-  assert.equal(await resolveWorkspace(run, { env: { HERDR_PANE_ID: "w9:p4" } }), "w9");
-  assert.ok(calls.some((call) => call.includes("w9:p4")));
+  // 2. no pane: fall back to what the process was started with
+  assert.equal(await resolveWorkspace(run, { env: { HERDR_WORKSPACE_ID: "w2" } }), "w2");
 
   // 3. neither: the focused workspace
   calls = [];

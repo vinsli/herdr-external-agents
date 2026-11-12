@@ -209,19 +209,19 @@ async function jsonRun(run: Runner, args: string[], options?: { timeout?: number
 }
 
 /**
- * Which workspace a worker belongs to: the one the dispatching agent runs in.
- * That is `HERDR_WORKSPACE_ID` of this process; if it is missing (pi started
- * outside Herdr), fall back to the workspace owning this pane, then to the
- * focused workspace. Never a hardcoded id.
+ * Which workspace a worker belongs to: the one the dispatching agent is in right now.
+ * The pane's live location wins over `HERDR_WORKSPACE_ID`, because that env var is
+ * captured at process start — a pi pane moved to another workspace (or a herdr
+ * restart that re-homes panes) still dispatches into the workspace it sits in now.
+ * Never a hardcoded id.
  */
 export async function resolveWorkspace(
   run: Runner,
   options?: { env?: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<string | undefined> {
   const env = options?.env ?? process.env;
-  const fromEnv = env.HERDR_WORKSPACE_ID?.trim();
-  if (fromEnv) return fromEnv;
 
+  // 1. where this pane actually is (live truth)
   const paneId = env.HERDR_PANE_ID?.trim();
   if (paneId) {
     const pane = await jsonRun(run, ["pane", "get", paneId], { signal: options?.signal }).catch(() => null);
@@ -229,6 +229,11 @@ export async function resolveWorkspace(
     if (workspaceId) return workspaceId;
   }
 
+  // 2. what the process was started with
+  const fromEnv = env.HERDR_WORKSPACE_ID?.trim();
+  if (fromEnv) return fromEnv;
+
+  // 3. whatever is focused
   const list = await jsonRun(run, ["workspace", "list"], { signal: options?.signal }).catch(() => null);
   const spaces = list?.result?.workspaces ?? list?.result?.workspace ?? [];
   const focused = spaces.find((space: any) => space.focused);
