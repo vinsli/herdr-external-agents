@@ -169,7 +169,9 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
       ),
       noClose: Type.Optional(Type.Boolean({ description: "Keep the pane open after the worker finishes" })),
       keepPrompt: Type.Optional(Type.Boolean({ description: "Launch the agent but do not send a task yet" })),
-      createTab: Type.Optional(Type.Boolean({ description: "Create the subagent tab when it is missing" })),
+      createTab: Type.Optional(
+        Type.Boolean({ description: "Create the subagents tab when missing (default true)" }),
+      ),
       pane: Type.Optional(Type.String({ description: "Target pane for read/prompt/cancel" })),
       lines: Type.Optional(Type.Number({ description: "Lines to read for action:'read' (default 60)" })),
       source: Type.Optional(
@@ -276,7 +278,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         approval: params.approval,
         autoclose: params.noClose ? false : true,
         keepPrompt: params.keepPrompt,
-        createTab: params.createTab,
+        createTab: params.createTab ?? true,
         workspace: currentWorkspace(),
         signal,
         onProgress: (text) => onUpdate?.({ content: [{ type: "text", text }], details: {} }),

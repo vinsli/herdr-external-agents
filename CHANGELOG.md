@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.4
+
+- `subagents` tab **默认自动创建**（`createTab` 默认 true）：新 workspace 第一次派活即可，不必先手工建 tab。
+
 ## 1.1.3
 
 - tab 改为按 **workspace 归属**：派活的 pi 在 `w2`，worker 就落在 `w2` 的 `subagents` tab，不再跟随焦点 workspace。

@@ -547,7 +547,7 @@ export async function startWorker(run: Runner, options: StartOptions): Promise<S
 
   const command = launchCommand(options.kind, options);
   const { tab, root, created } = await findSubagentTab(run, {
-    create: options.createTab ?? false,
+    create: options.createTab ?? true,
     label: options.tabLabel,
     workspace: options.workspace,
     signal: options.signal,
