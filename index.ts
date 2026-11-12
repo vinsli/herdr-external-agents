@@ -2,6 +2,7 @@ import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { readFile } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   agentInfo,
@@ -11,6 +12,7 @@ import {
   registryPath,
   promptWithRetry,
   startWorker,
+  stateDir,
   unregisterWorker,
   watchWorker,
   type RunResult,
@@ -33,6 +35,15 @@ const KIND = StringEnum(["codely", "codex"] as const);
 
 export default function herdrExternalAgents(pi: ExtensionAPI) {
   const watchers = new Map<string, AbortController>();
+
+  /** Append-only trace: who started, who finished, who closed the pane, who vanished. */
+  function logEvent(entry: Record<string, unknown>) {
+    try {
+      appendFileSync(`${stateDir()}/events.log`, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+    } catch {
+      // tracing must never break a dispatch
+    }
+  }
 
   const run: Runner = async (command, args, options): Promise<RunResult> => {
     const result = await pi.exec(command, args, {
@@ -62,7 +73,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
           event.kind === "done"
             ? `status=${event.status}${event.title ? ` title="${event.title}"` : ""}`
             : event.kind === "blocked"
-              ? `approve with: herdr pane send-keys ${pane} Enter`
+              ? `approve with: herdr pane send-keys ${pane} Enter (still watching; you get [worker done] after the turn ends)`
               : "pane disappeared before reporting completion (crashed, or closed elsewhere); not counted as success";
 
         if (event.kind === "pane-gone") {
@@ -70,17 +81,17 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
           // died or someone else closed it: report it, but never claim success.
           unregisterWorker(pane);
           watchers.delete(pane);
+          controller.abort();
+          logEvent({ pane, event: "pane-gone" });
         }
 
-        if (event.kind === "done" && options.autoclose !== false) {
-          await cancelWorker(run, pane).catch(() => undefined);
+        if (event.kind === "done") {
+          logEvent({ pane, event: "done", status: event.status, closed: options.autoclose !== false });
+          if (options.autoclose !== false) await cancelWorker(run, pane).catch(() => undefined);
           watchers.delete(pane);
-        }
-        if (event.kind === "blocked") {
-          // keep watching: blocking is not terminal
           controller.abort();
-          watchers.delete(pane);
         }
+        // blocked is not terminal: keep watching so the approval still ends with [worker done].
 
         pi.sendMessage(
           { customType: "herdr-worker", content: `${label} ${detail}`, display: true },
@@ -215,6 +226,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         const pane = requirePane();
         watchers.get(pane)?.abort();
         watchers.delete(pane);
+        logEvent({ pane, event: "cancelled" });
         const result = await cancelWorker(run, pane, { signal });
         return {
           content: [{ type: "text", text: `closed ${pane} (closed=${result.closed})` }],
@@ -255,6 +267,14 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         "",
         `read: external_worker({ action: "read", pane: "${result.pane}" })`,
       ].filter(Boolean);
+      logEvent({
+        pane: result.pane,
+        event: "started",
+        kind: result.kind,
+        cwd,
+        model: params.model ?? null,
+        promptStarted: result.promptStarted,
+      });
       startWatch(result.pane, { autoclose: params.noClose ? false : true });
       return {
         content: [{ type: "text", text: lines.join("\n") }],

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2
+
+- `blocked` 不再中止 watcher：批准后仍会收到 `[worker done]`。
+- 每次派活/完成/阻塞/取消/消失都写 `~/.local/state/herdr-worker/events.log`（一行一条 JSON），排障用。
+
 ## 1.1.1
 
 - `pane-gone` 不再静默：worker 进程崩了或 pane 被别处关掉时注入 `[worker gone] …`（不算成功、不关 pane）。
