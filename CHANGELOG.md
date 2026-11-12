@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.5
+
+- workspace 解析改成 `resolveWorkspace()`：`HERDR_WORKSPACE_ID` → 本 pane 所属 workspace（`HERDR_PANE_ID`）→ focused workspace。
+  **没有任何写死的 id**；派活的 pi 在哪个 workspace，worker 就落在哪个。
+
 ## 1.1.4
 
 - `subagents` tab **默认自动创建**（`createTab` 默认 true）：新 workspace 第一次派活即可，不必先手工建 tab。

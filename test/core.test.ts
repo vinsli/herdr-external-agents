@@ -10,6 +10,7 @@ import {
   findSubagentTab,
   launchCommand,
   reapSubagentTab,
+  resolveWorkspace,
   promptWithRetry,
   readRegistry,
   startWorker,
@@ -444,4 +445,42 @@ test("reapSubagentTab closes the tab only when no agent is left in it", async ()
   const idle = build([{ pane_id: "w1:p1", tab_id: "w1:t1" }]);
   assert.equal(await reapSubagentTab(idle.run, { tab: "w1:t1" }), true);
   assert.ok(idle.calls.some((call) => call.includes("close") && call.includes("w1:t1")));
+});
+
+test("resolveWorkspace follows the dispatching agent, not a fixed id", async () => {
+  let calls: string[][] = [];
+  const run: Runner = async (command, args) => {
+    calls.push([command, ...args]);
+    if (args[0] === "pane" && args[1] === "get") {
+      return { stdout: JSON.stringify({ result: { pane: { pane_id: "w9:p4", workspace_id: "w9" } } }), stderr: "", code: 0 };
+    }
+    if (args[0] === "workspace" && args[1] === "list") {
+      return {
+        stdout: JSON.stringify({
+          result: {
+            workspaces: [
+              { workspace_id: "w1", focused: false },
+              { workspace_id: "w3", focused: true },
+            ],
+          },
+        }),
+        stderr: "",
+        code: 0,
+      };
+    }
+    throw new Error(`unexpected ${args.join(" ")}`);
+  };
+
+  // 1. explicit env wins (that is where pi runs)
+  assert.equal(await resolveWorkspace(run, { env: { HERDR_WORKSPACE_ID: "w2" } }), "w2");
+
+  // 2. env missing: the workspace owning this pane
+  calls = [];
+  assert.equal(await resolveWorkspace(run, { env: { HERDR_PANE_ID: "w9:p4" } }), "w9");
+  assert.ok(calls.some((call) => call.includes("w9:p4")));
+
+  // 3. neither: the focused workspace
+  calls = [];
+  assert.equal(await resolveWorkspace(run, { env: {} }), "w3");
+  assert.ok(calls.some((call) => call.includes("workspace")));
 });

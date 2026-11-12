@@ -12,6 +12,7 @@ import {
   reapSubagentTab,
   registryPath,
   promptWithRetry,
+  resolveWorkspace,
   startWorker,
   stateDir,
   unregisterWorker,
@@ -38,9 +39,9 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
   const watchers = new Map<string, AbortController>();
 
   /** Append-only trace: who started, who finished, who closed the pane, who vanished. */
-  /** The tab belongs to the workspace the dispatcher runs in, so workers of `w2` stay in `w2`. */
-  function currentWorkspace(): string | undefined {
-    return process.env.HERDR_WORKSPACE_ID || undefined;
+  /** The tab belongs to the workspace the dispatching agent runs in — never a fixed id. */
+  async function currentWorkspace(): Promise<string | undefined> {
+    return resolveWorkspace(run).catch(() => undefined);
   }
 
   /**
@@ -268,6 +269,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
 
       const cwd = resolve(ctx.cwd, params.cwd ?? ".");
       const router = params.router ?? routerName(pi, ctx.sessionManager?.getSessionId?.());
+      const workspace = await currentWorkspace();
       const result = await startWorker(run, {
         kind: params.kind as WorkerKind,
         task,
@@ -279,13 +281,13 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         autoclose: params.noClose ? false : true,
         keepPrompt: params.keepPrompt,
         createTab: params.createTab ?? true,
-        workspace: currentWorkspace(),
+        workspace,
         signal,
         onProgress: (text) => onUpdate?.({ content: [{ type: "text", text }], details: {} }),
       });
 
       const lines = [
-        `pane: ${result.pane} (tab ${result.tab})`,
+        `pane: ${result.pane} (tab ${result.tab}, workspace ${workspace ?? "unknown"})`,
         `kind: ${result.kind}  agent: ${result.agent ?? "not detected"}`,
         `promptStarted: ${result.promptStarted}  attempts: ${result.attempts}` +
           (result.lastStatus ? `  lastStatus: ${result.lastStatus}` : ""),

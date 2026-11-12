@@ -208,6 +208,33 @@ async function jsonRun(run: Runner, args: string[], options?: { timeout?: number
   }
 }
 
+/**
+ * Which workspace a worker belongs to: the one the dispatching agent runs in.
+ * That is `HERDR_WORKSPACE_ID` of this process; if it is missing (pi started
+ * outside Herdr), fall back to the workspace owning this pane, then to the
+ * focused workspace. Never a hardcoded id.
+ */
+export async function resolveWorkspace(
+  run: Runner,
+  options?: { env?: NodeJS.ProcessEnv; signal?: AbortSignal },
+): Promise<string | undefined> {
+  const env = options?.env ?? process.env;
+  const fromEnv = env.HERDR_WORKSPACE_ID?.trim();
+  if (fromEnv) return fromEnv;
+
+  const paneId = env.HERDR_PANE_ID?.trim();
+  if (paneId) {
+    const pane = await jsonRun(run, ["pane", "get", paneId], { signal: options?.signal }).catch(() => null);
+    const workspaceId = pane?.result?.pane?.workspace_id;
+    if (workspaceId) return workspaceId;
+  }
+
+  const list = await jsonRun(run, ["workspace", "list"], { signal: options?.signal }).catch(() => null);
+  const spaces = list?.result?.workspaces ?? list?.result?.workspace ?? [];
+  const focused = spaces.find((space: any) => space.focused);
+  return focused?.workspace_id;
+}
+
 export async function findSubagentTab(
   run: Runner,
   options?: { create?: boolean; label?: string; workspace?: string; signal?: AbortSignal },
