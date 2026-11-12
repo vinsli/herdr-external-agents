@@ -91,7 +91,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
           event.kind === "done"
             ? `status=${event.status}${event.title ? ` title="${event.title}"` : ""}`
             : event.kind === "blocked"
-              ? `approve with: herdr pane send-keys ${pane} Enter (still watching; you get [worker done] after the turn ends)`
+              ? `approve with: herdr pane send-keys ${pane} Enter`
               : "pane disappeared before reporting completion (crashed, or closed elsewhere); not counted as success";
 
         if (event.kind === "pane-gone") {
