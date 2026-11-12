@@ -30,9 +30,10 @@ external_worker({ action: "cancel", pane })
 | 依赖 | 说明 |
 | --- | --- |
 | **Herdr fork** [`vinsli/herdr`](https://github.com/vinsli/herdr) | 上游 herdr 没有 `Agent::Codely`，codely 不会被识别成 named agent，`agent prompt` 会返回 `agent_not_ready`。fork 增加了 `Agent::Codely` + `manifests/codely.toml`。 |
-| herdr 插件 [`local.worker-notify`](https://github.com/vinsli/herdr-external-agents/wiki) | 监听 `pane.agent_status_changed`，完成时推送 + 关 pane。装在 `~/.local/share/herdr-plugins/worker-notify/`，`herdr plugin link` 注册。 |
-| [`pi-intercom`](https://www.npmjs.com/package/pi-intercom) `>=0.18.1` | 通知通道：插件用它的 CLI 唤醒 Router 会话；扩展用同一套命名规则决定 `router`。 |
-| Node ≥ 22（Homebrew） | 插件与 pi-intercom CLI 都是 Node 程序；pane 里启动 agent 时记得 `PATH=/opt/homebrew/bin:$PATH`。 |
+| Node ≥ 22（Homebrew） | 扩展由 pi 自己的 Node 运行；pane 里启动 agent 时记得 `PATH=/opt/homebrew/bin:$PATH`。 |
+
+`pi-intercom` **不是收尾依赖**：完成/阻塞通知由本扩展在派活的那个 pi 会话内完成（`pi.sendMessage`）。
+只有当你希望 worker 主动回话（`pi-intercom send/ask`）时才需要它。
 
 ## 安装
 
@@ -54,18 +55,26 @@ pi install ~/Documents/github/herdr-external-agents
 ## 开发与测试
 
 ```bash
-node --test test/core.test.ts     # 12 条，注入假 Runner，不碰真实 herdr
+node --test test/core.test.ts     # 19 条，注入假 Runner，不碰真实 herdr
 ```
 
 `core.ts` 不 import pi，可单独测试；`index.ts` 只做协议适配（工具注册、参数校验、`pi.exec`）。
 
-## 收尾链路
+## 收尾链路（全部在扩展内，herdr 无感知）
 
 ```
-external_worker (pi 扩展)          ── 建 pane、派活、读正文、取消
-        │  共享 ~/.local/state/herdr-worker/workers.json
-local.worker-notify (herdr 插件)   ── 完成/阻塞事件 → pi-intercom 推送 → 关 pane
+external_worker  start()  ── 建 pane、派活、登记 workers.json
+        │
+        └─ startWatch(pane) ── 本 pi 进程每 2s 轮询 agent get + pane get
+                              working → armed（只有真开过工才算数）
+                              idle|done + armed → [worker done] 消息（triggerTurn 唤醒会话）
+                                                    + 默认 pane close
+                              blocked → [worker blocked] 消息（附批准命令，pane 保留）
+                              pane 消失 → 静默注销，不报成功（取消≠完成）
 ```
 
-注册表是两边的契约：扩展写 `{kind, router, task, cwd, autoclose, armed, seen}`，
-插件只处理登记过的 pane；`pane close` 会补发一次 `idle/done`，插件用 `pane get` 确认 pane 仍在，避免把取消误报成完成。
+为什么不让 herdr 做：Herdr 是通用终端宿主，不该知道 pi / pi-intercom 的存在。
+「干完了」这件事由派活方（pi 会话）自己观察与处理；Herdr 只提供 `agent get` / `pane get`。
+
+注册表仍写在 `~/.local/state/herdr-worker/workers.json`，用途变成：跨会话/重启后
+`session_start` 收养遗留 worker（按 `router` 过滤），以及 `workers` 命令/`list` 展示。

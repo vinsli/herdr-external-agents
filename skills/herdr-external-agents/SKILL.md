@@ -30,17 +30,17 @@ external_worker({ action: "cancel", pane })
 等 TUI 画出输入框 → 送任务并确认真的开跑 → 把 pane 登记进 `~/.local/state/herdr-worker/workers.json`。
 返回 `pane`、`agent`、`promptStarted`、`warnings`。
 
-登记过的 pane 由 Herdr 插件 `local.worker-notify` 收尾：`working → done|idle` 时用 pi-intercom 推送
-`[worker done] …`（会唤醒 Router 会话），随后默认关 pane；`blocked` 时推 `[worker blocked] …` 并保留 pane。
+登记过的 pane 由本扩展自己收尾：`working → done|idle` 时向当前会话注入 `[worker done] …`
+（`triggerTurn` 会唤醒它），随后默认关 pane；`blocked` 时注入 `[worker blocked] …` 并保留 pane；
+pane 先消失则静默注销（取消不是完成）。
 
 ## 依赖（本机已满足）
 
 | 依赖 | 为什么必须有 | 缺了会怎样 |
 | --- | --- | --- |
 | Herdr **fork** `vinsli/herdr`（含 `Agent::Codely`） | codely 必须被识别成 named agent，`agent prompt` 才可用 | codely 只能退回 `pane send-text`，没有 submit 顺序与 in-flight 校验 |
-| `pi-intercom`（npm 包 + CLI） | 完成/阻塞通知靠它唤醒 Router 会话 | 只关 pane、不通知，Router 只能自己轮询 |
-| Herdr 插件 `local.worker-notify` | 监听 `pane.agent_status_changed` 做收尾 | 完成事件没人处理，pane 不会自动关 |
-| Node ≥ 22（Homebrew） | 插件与 pi-intercom CLI 都是 Node 程序 | 插件 hook 找不到 node / 版本过低 |
+| Node ≥ 22（Homebrew） | 扩展随 pi 的 Node 运行；pane 里的 agent 也要它 | pane 里命中 DevEco 的 Node 18 会静默挂死 |
+| （可选）`pi-intercom` | 只有 worker 需要主动回话（`send/ask`）时才用 | 不影响完成通知与自动关 pane |
 
 ## 核心事实
 
@@ -102,8 +102,7 @@ herdr pane close "$P"
 - **`agent_blocked`**：它在等确认，先问用户，不要自动批准。
 - **换了 herdr 二进制必须重启 server**（`herdr server stop` 再 `herdr`）；`ps -o lstart` 看 server 启动时间确认真的换了。
 - **送 prompt 前必须等输入框**：codely `Type your message`、codex `Ask Codex to do anything`；没画出来就送会被 TUI 吞掉（`external_worker` 已内置这一步）。
-- **插件命令必须用绝对路径**（`/opt/homebrew/bin/node`）：event hook 的 `PATH` 是精简的，写 `node` 会报 `No such file or directory`（`herdr plugin log list` 可确诊）。
-- **codely 的完成态是 `done`**（不是 `idle`），screen agent 是 `idle`，插件两种都认。
+- **codely 的完成态是 `done`**（不是 `idle`），screen agent 是 `idle`，watcher 两种都认。
 - **codex 完成信号依赖 manifest 检测**：`herdr agent explain <pane>` 若显示 `manifest: remote:…/codex.toml`，说明被测试残留 manifest 污染，codex 永远报 idle；删文件 + 重启 server（见 fork `FORK.md`）。
 - **别用 `pane send-text` + `send-keys Enter` 代替 prompt**：那样不享受 submit 顺序与 in-flight 校验，只在 prompt 被拒且必须硬塞时兜底。
 - **`herdr api snapshot` 一次拿全量状态**（agents/tabs/panes + `agent_status`/`state_change_seq`），比逐个 `agent get` 快。
@@ -113,7 +112,7 @@ herdr pane close "$P"
 | 层 | 工具 | 职责 |
 | --- | --- | --- |
 | 派活 / 状态 / 正文 | `external_worker` 工具（内部走 Herdr `agent *` / `pane *`） | 建 pane、起 agent、送任务、读结果、收尾 |
-| 完成通知 + 自动关 pane | Herdr 插件 `local.worker-notify`（外部依赖） | `pane.agent_status_changed` → intercom 推送 + `pane close` |
+| 完成通知 + 自动关 pane | `external_worker` 内置 watcher（在本会话内轮询 `agent get`/`pane get`） | 起跑后 `working→idle|done` → 注入 `[worker done]` + `pane close` |
 | 会话间对话 | `intercom` 工具 / `pi-intercom` CLI | 跨 harness 双向消息（ask 可等回复） |
 | 结构化长结论 | `.handoff/<task>.md` | 稳定交付物，Router 以文件为准 |
 | 任务状态 | Backlog CLI | 任务生命周期唯一真相 |

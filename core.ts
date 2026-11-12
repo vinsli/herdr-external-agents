@@ -33,6 +33,33 @@ export type WorkerEntry = {
 
 export type Workers = Record<string, WorkerEntry>;
 
+export type WatchEvent =
+  | { kind: "blocked"; pane: string; title?: string }
+  | { kind: "done"; pane: string; status: string; title?: string }
+  | { kind: "pane-gone"; pane: string };
+
+/**
+ * Decide whether a polling observation is worth acting on.
+ * Only a worker whose turn was actually observed (`armed` or `seen.working`)
+ * reports completion, so a freshly opened idle pane is never mistaken for a
+ * finished one (the old herdr-plugin bug), and a closed pane is reported as
+ * `pane-gone` instead of a fake `idle`.
+ */
+export function decideWatchEvent(
+  entry: WorkerEntry | undefined,
+  status: string | null | undefined,
+  paneAlive: boolean,
+): "done" | "blocked" | "pane-gone" | null {
+  if (!entry) return null;
+  if (!paneAlive) return "pane-gone";
+  const started = entry.armed === true || entry.seen?.working === true;
+  if (status === "blocked" && !entry.blockedNotified) return "blocked";
+  if (status === "idle" || status === "done") {
+    if (started && !entry.notified) return "done";
+  }
+  return null;
+}
+
 export const SUBAGENT_TAB_LABEL = "subagent";
 export const COMPOSER_MATCH: Record<WorkerKind, string> = {
   codely: "Type your message",
@@ -225,14 +252,93 @@ export async function agentInfo(
   run: Runner,
   pane: string,
   signal?: AbortSignal,
-): Promise<{ agent?: string | null; status?: string | null; completionSeq?: number }> {
+): Promise<{ agent?: string | null; status?: string | null; completionSeq?: number; title?: string | null }> {
   const got = await jsonRun(run, ["agent", "get", pane], { signal, timeout: 15_000 });
   const agent = got?.result?.agent ?? {};
   return {
     agent: agent.agent ?? null,
     status: agent.agent_status ?? null,
     completionSeq: Number(agent.completion_seq ?? 0),
+    title: agent.terminal_title ?? null,
   };
+}
+
+/** Does this pane still exist? A closed pane must never look like a finished turn. */
+export async function paneAlive(run: Runner, pane: string, signal?: AbortSignal): Promise<boolean> {
+  const result = await run("herdr", ["pane", "get", pane], { timeout: 15_000, signal }).catch(
+    () => ({ code: 1 } as RunResult),
+  );
+  return result.code === 0;
+}
+
+export type WatchOptions = {
+  /** Poll interval in ms (default 2000). */
+  pollMs?: number;
+  /** Stop condition for tests; production watches until the pane settles. */
+  maxPolls?: number;
+  signal?: AbortSignal;
+  /** Registry file, injectable so tests never touch the real one. */
+  registryFile?: string;
+  onEvent?: (event: WatchEvent) => void | Promise<void>;
+};
+
+/**
+ * Watch one worker pane from inside the pi session that dispatched it.
+ * This replaces the old `local.worker-notify` Herdr plugin: the completion
+ * signal belongs to the dispatcher (it owns the pane lifecycle and knows the
+ * router), while Herdr stays a generic terminal host with no pi dependency.
+ * Returns when the worker settles (done / pane-gone), the signal aborts, or
+ * the poll budget runs out.
+ */
+export async function watchWorker(run: Runner, pane: string, options: WatchOptions = {}): Promise<WatchEvent | null> {
+  const path = options.registryFile ?? registryPath();
+  const pollMs = options.pollMs ?? 2000;
+  let polls = 0;
+
+  for (;;) {
+    if (options.signal?.aborted) return null;
+    if (options.maxPolls !== undefined && polls >= options.maxPolls) return null;
+    polls += 1;
+
+    const entry = readRegistry(path)[pane];
+    if (!entry) return null; // cancelled, adopted elsewhere, or finished by another watcher
+
+    const info = await agentInfo(run, pane, options.signal).catch(() => ({}) as { status?: string | null });
+    const alive = await paneAlive(run, pane, options.signal);
+
+    const workers = readRegistry(path);
+    const current = workers[pane];
+    if (current) {
+      let dirty = false;
+      if (info.status === "working" && !current.seen?.working) {
+        current.seen = { ...current.seen, working: true };
+        current.armed = true;
+        dirty = true;
+      }
+      if (dirty) writeRegistry(workers, path);
+    }
+
+    const event = decideWatchEvent(readRegistry(path)[pane], info.status, alive);
+    if (event) {
+      const workersNow = readRegistry(path);
+      const settled = workersNow[pane];
+      if (settled) {
+        if (event === "blocked") settled.blockedNotified = true;
+        if (event === "done") settled.notified = true;
+        writeRegistry(workersNow, path);
+      }
+      const payload: WatchEvent =
+        event === "done"
+          ? { kind: "done", pane, status: String(info.status ?? "idle"), title: info.title ?? undefined }
+          : event === "blocked"
+            ? { kind: "blocked", pane, title: info.title ?? undefined }
+            : { kind: "pane-gone", pane };
+      await options.onEvent?.(payload);
+      if (event !== "blocked") return payload; // blocked keeps watching: the turn may resume
+    }
+
+    await sleep(pollMs, options.signal).catch(() => undefined);
+  }
 }
 
 export async function waitForDetection(

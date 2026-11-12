@@ -5,11 +5,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   cancelWorker,
+  decideWatchEvent,
   ensureCodexTrust,
   launchCommand,
   promptWithRetry,
   readRegistry,
   startWorker,
+  watchWorker,
   writeRegistry,
   type Runner,
 } from "../core.ts";
@@ -231,4 +233,109 @@ test("ensureCodexTrust creates a missing config file", () => {
   assert.equal(ensureCodexTrust(dir, config), true);
   assert.match(readFileSync(config, "utf8"), /trust_level = "trusted"/);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// --- in-session completion watcher (replaces the local.worker-notify Herdr plugin) ---
+
+test("decideWatchEvent refuses to report an unarmed idle pane as done", () => {
+  // The old plugin bug: a freshly opened pane is idle before any turn starts.
+  assert.equal(decideWatchEvent({ kind: "codely" }, "idle", true), null);
+  assert.equal(decideWatchEvent({ kind: "codely", armed: true }, "idle", true), "done");
+  assert.equal(decideWatchEvent({ kind: "codely", seen: { working: true } }, "done", true), "done");
+  assert.equal(decideWatchEvent({ kind: "codely", armed: true, notified: true }, "idle", true), null);
+  assert.equal(decideWatchEvent(undefined, "idle", true), null);
+});
+
+test("decideWatchEvent treats a vanished pane as gone, never as success", () => {
+  assert.equal(decideWatchEvent({ kind: "codely", armed: true }, "idle", false), "pane-gone");
+});
+
+test("decideWatchEvent reports blocked once, then stops repeating", () => {
+  assert.equal(decideWatchEvent({ kind: "codely", armed: true }, "blocked", true), "blocked");
+  assert.equal(decideWatchEvent({ kind: "codely", armed: true, blockedNotified: true }, "blocked", true), null);
+});
+
+function fakeWatcher(statuses: string[], options: { aliveAfter?: number; title?: string } = {}) {
+  let poll = 0;
+  let panePoll = 0;
+  const run: Runner = async (command, args) => {
+    const json = (value: unknown) => ({ stdout: JSON.stringify(value), stderr: "", code: 0 });
+    const [group, verb] = args;
+    if (command !== "herdr") throw new Error(`unexpected command ${command}`);
+    if (group === "agent" && verb === "get") {
+      const status = statuses[Math.min(poll, statuses.length - 1)];
+      poll += 1;
+      return json({
+        result: { agent: { agent: "codely", agent_status: status, completion_seq: poll, terminal_title: options.title ?? "" } },
+      });
+    }
+    if (group === "pane" && verb === "get") {
+      const gone = options.aliveAfter !== undefined && panePoll >= options.aliveAfter;
+      panePoll += 1;
+      return gone ? { stdout: "", stderr: "no such pane", code: 1 } : json({ result: { pane: { pane_id: args[2] } } });
+    }
+    if (group === "pane" && verb === "close") return json({ result: {} });
+    throw new Error(`unhandled herdr call: ${args.join(" ")}`);
+  };
+  return { run };
+}
+
+test("watchWorker arms on the first observed working state and reports done once", async () => {
+  const { registry } = freshState();
+  writeRegistry({ "w1:p2": { kind: "codely", router: "secretary", autoclose: true } }, registry);
+  const fake = fakeWatcher(["working", "working", "idle"]);
+  const seen: string[] = [];
+  const event = await watchWorker(fake.run, "w1:p2", {
+    registryFile: registry,
+    pollMs: 1,
+    maxPolls: 3,
+    onEvent: (e) => {
+      seen.push(e.kind);
+    },
+  });
+  assert.equal(event?.kind, "done");
+  assert.deepEqual(seen, ["done"]);
+  const entry = readRegistry(registry)["w1:p2"];
+  assert.equal(entry.seen?.working, true);
+  assert.equal(entry.notified, true);
+});
+
+test("watchWorker keeps watching after blocked and reports the eventual completion", async () => {
+  const { registry } = freshState();
+  writeRegistry({ "w1:p2": { kind: "codely", armed: true } }, registry);
+  const fake = fakeWatcher(["blocked", "working", "idle"]);
+  const seen: string[] = [];
+  const event = await watchWorker(fake.run, "w1:p2", {
+    registryFile: registry,
+    pollMs: 1,
+    maxPolls: 4,
+    onEvent: (e) => {
+      seen.push(e.kind);
+    },
+  });
+  assert.deepEqual(seen, ["blocked", "done"]);
+  assert.equal(event?.kind, "done");
+  assert.equal(readRegistry(registry)["w1:p2"].blockedNotified, true);
+});
+
+test("watchWorker reports pane-gone instead of a fake completion", async () => {
+  const { registry } = freshState();
+  writeRegistry({ "w1:p2": { kind: "codex", armed: true } }, registry);
+  const fake = fakeWatcher(["idle", "idle"], { aliveAfter: 0 });
+  const seen: string[] = [];
+  const event = await watchWorker(fake.run, "w1:p2", {
+    registryFile: registry,
+    pollMs: 1,
+    maxPolls: 2,
+    onEvent: (e) => seen.push(e.kind),
+  });
+  assert.equal(event?.kind, "pane-gone");
+  assert.deepEqual(seen, ["pane-gone"]);
+});
+
+test("watchWorker returns immediately for an unregistered pane", async () => {
+  const { registry } = freshState();
+  const fake = fakeWatcher(["idle"]);
+  const event = await watchWorker(fake.run, "w1:p2", { registryFile: registry, pollMs: 1, maxPolls: 2 });
+  assert.equal(event, null);
 });

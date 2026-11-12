@@ -11,8 +11,11 @@ import {
   registryPath,
   promptWithRetry,
   startWorker,
+  unregisterWorker,
+  watchWorker,
   type RunResult,
   type Runner,
+  type WatchEvent,
   type WorkerKind,
 } from "./core.ts";
 
@@ -29,6 +32,8 @@ function routerName(pi: ExtensionAPI, sessionId: string | undefined): string | u
 const KIND = StringEnum(["codely", "codex"] as const);
 
 export default function herdrExternalAgents(pi: ExtensionAPI) {
+  const watchers = new Map<string, AbortController>();
+
   const run: Runner = async (command, args, options): Promise<RunResult> => {
     const result = await pi.exec(command, args, {
       timeout: options?.timeout ?? 60_000,
@@ -38,16 +43,78 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
     return { stdout: result.stdout, stderr: result.stderr, code: result.code };
   };
 
+  /**
+   * The dispatcher owns the completion signal: Herdr only reports pane status,
+   * this session turns it into a message + pane close. Nothing outside pi
+   * (no Herdr plugin) needs to know that pi-intercom or pi exist at all.
+   */
+  function startWatch(pane: string, options: { autoclose?: boolean } = {}) {
+    watchers.get(pane)?.abort();
+    const controller = new AbortController();
+    watchers.set(pane, controller);
+
+    void watchWorker(run, pane, {
+      signal: controller.signal,
+      onEvent: async (event: WatchEvent) => {
+        const label = event.kind === "done" ? `[worker done] ${pane}` : event.kind === "blocked" ? `[worker blocked] ${pane}` : `[worker gone] ${pane}`;
+        const detail =
+          event.kind === "done"
+            ? `status=${event.status}${event.title ? ` title="${event.title}"` : ""}`
+            : event.kind === "blocked"
+              ? `approve with: herdr pane send-keys ${pane} Enter`
+              : "pane disappeared; treated as settled, not as success";
+
+        if (event.kind === "pane-gone") {
+          unregisterWorker(pane);
+          watchers.delete(pane);
+          return;
+        }
+
+        if (event.kind === "done" && options.autoclose !== false) {
+          await cancelWorker(run, pane).catch(() => undefined);
+          watchers.delete(pane);
+        }
+        if (event.kind === "blocked") {
+          // keep watching: blocking is not terminal
+          controller.abort();
+          watchers.delete(pane);
+        }
+
+        pi.sendMessage(
+          { customType: "herdr-worker", content: `${label} ${detail}`, display: true },
+          { deliverAs: "followUp", triggerTurn: true },
+        );
+      },
+    }).catch(() => {
+      watchers.delete(pane);
+    });
+  }
+
+  pi.on("session_start", async (_event, ctx) => {
+    // Adopt workers left registered by an earlier session of this router.
+    const me = routerName(pi, ctx.sessionManager?.getSessionId?.());
+    for (const [pane, entry] of Object.entries(readRegistry())) {
+      if (entry.router && me && entry.router !== me) continue;
+      if (watchers.has(pane)) continue;
+      startWatch(pane, { autoclose: entry.autoclose });
+    }
+  });
+
+  pi.on("session_shutdown", async () => {
+    for (const controller of watchers.values()) controller.abort();
+    watchers.clear();
+  });
+
   pi.registerTool({
     name: "external_worker",
     label: "External Worker",
     description:
       "Run an external coding agent (codely or codex) in a pane inside the Herdr `subagent` tab, prompt it, read it, and cancel it. " +
-      "Completion notification and auto-close are handled by the `local.worker-notify` Herdr plugin once the pane goes idle/done.",
+      "This session watches the pane itself: on completion it injects a [worker done] message and closes the pane unless noClose is set.",
     promptSnippet:
       "external_worker: start/list/read/prompt/cancel external codely or codex workers in the Herdr subagent tab",
     promptGuidelines: [
-      "Use external_worker instead of spawning codely or codex by hand with `herdr pane` commands; it registers the pane so the worker-notify plugin notifies you and closes it when the work is done.",
+      "Use external_worker instead of spawning codely or codex by hand with `herdr pane` commands; it registers the pane, notifies this session when the worker finishes, and closes the pane.",
       "Use external_worker({action:'read'}) to read a worker's pane before cancelling or re-prompting it.",
       "external_worker action:'start' returns promptStarted:false with warnings when the turn never started; read the pane before retrying, because re-sending a task can duplicate work.",
     ],
@@ -144,6 +211,8 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
 
       if (params.action === "cancel") {
         const pane = requirePane();
+        watchers.get(pane)?.abort();
+        watchers.delete(pane);
         const result = await cancelWorker(run, pane, { signal });
         return {
           content: [{ type: "text", text: `closed ${pane} (closed=${result.closed})` }],
@@ -179,12 +248,12 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         `kind: ${result.kind}  agent: ${result.agent ?? "not detected"}`,
         `promptStarted: ${result.promptStarted}  attempts: ${result.attempts}` +
           (result.lastStatus ? `  lastStatus: ${result.lastStatus}` : ""),
-        `router: ${router ?? "(none — no completion push)"}`,
         `autoclose: ${params.noClose ? false : true}`,
         result.warnings.length ? `warnings: ${result.warnings.join(" | ")}` : "",
         "",
         `read: external_worker({ action: "read", pane: "${result.pane}" })`,
       ].filter(Boolean);
+      startWatch(result.pane, { autoclose: params.noClose ? false : true });
       return {
         content: [{ type: "text", text: lines.join("\n") }],
         details: { ...result, router },
