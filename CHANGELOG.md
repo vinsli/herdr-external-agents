@@ -3,8 +3,10 @@
 ## 1.1.3
 
 - tab 改为按 **workspace 归属**：派活的 pi 在 `w2`，worker 就落在 `w2` 的 `subagents` tab，不再跟随焦点 workspace。
-- tab 名统一为 **`subagents`**（复数），兼容旧的单数名会让位给新 tab。
-- **tab 随最后一个 worker 结束自动关闭**（`tab-reaped` 事件），不留空 shell。
+- tab 名统一为 **`subagents`**（复数）。
+- **tab 随最后一个 worker 结束自动关闭**（`events.log` 记 `tab-reaped`），不留空 shell。
+- `blocked` 不再中止 watcher：批准后仍会收到 `[worker done]`。
+- 每次派活/完成/阻塞/取消/消失/回收 tab 都写 `~/.local/state/herdr-worker/events.log`。
 
 ## 1.1.2
 

@@ -26,7 +26,7 @@ external_worker({ action: "prompt", pane, task })     # 追问 / 续派
 external_worker({ action: "cancel", pane })
 ```
 
-`start` 做的事：在 `subagent` tab 里 split 一个 pane → 起 agent → 等它被识别成 named agent →
+`start` 做的事：在本 workspace 的 `subagents` tab 里 split 一个 pane（没有就建，最后一个 worker 结束后 tab 自动关闭） → 起 agent → 等它被识别成 named agent →
 等 TUI 画出输入框 → 送任务并确认真的开跑 → 把 pane 登记进 `~/.local/state/herdr-worker/workers.json`。
 返回 `pane`、`agent`、`promptStarted`、`warnings`。
 
@@ -77,7 +77,8 @@ pi 角色会话没有沙箱，只读靠 prompt + 不给写工具；需要硬隔�
 ## 手写 herdr 命令的场景（工具覆盖不到时）
 
 ```bash
-TAB=$(herdr tab list | jq -r '.result.tabs[]|select(.label=="subagent")|.tab_id')
+WS=${HERDR_WORKSPACE_ID:?}   # 派活的 pi 所在 workspace
+TAB=$(herdr tab list | jq -r --arg w "$WS" '.result.tabs[]|select(.label=="subagents" and .workspace_id==$w)|.tab_id')
 ROOT=$(herdr pane list | jq -r --arg t "$TAB" '.result.panes[]|select(.tab_id==$t)|.pane_id' | head -1)
 P=$(herdr pane split --pane "$ROOT" --direction down --no-focus | jq -r '.result.pane.pane_id // .result.root_pane.pane_id')
 herdr pane run "$P" 'cd <repo> && PATH=/opt/homebrew/bin:$PATH codely'
