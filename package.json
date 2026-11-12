@@ -1,0 +1,31 @@
+{
+  "name": "herdr-external-agents",
+  "version": "1.0.0",
+  "description": "Pi extension: dispatch external codely/codex workers into the Herdr `subagent` tab with one tool call",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "herdr",
+    "codely",
+    "codex"
+  ],
+  "license": "MIT",
+  "private": false,
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "pi-intercom": ">=0.18.1"
+  },
+  "scripts": {
+    "test": "node --test test/core.test.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
