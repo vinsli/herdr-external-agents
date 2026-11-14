@@ -55,7 +55,8 @@ pane 先消失则注入 `[worker gone] …` 并注销（不算成功；`cancel` 
 本包只解决「把任务送进外部 agent 并取回结果」，**不定义角色**。角色提示词来自上层：
 
 - 项目层：`<repo>/.pi/agents/<role>.md`（例如 hpcsharp 的 `watchdog.md`）。
-- 全局角色包：`~/.pi/agent/skills/agent-roles/roles/<role>.md`（researcher / reviewer / oracle / planner / worker）。
+- 项目扩展层：角色注册表（role→agent 映射 + 启动参数 + prompt 指针），例如 hpcsharp 的
+  `.pi/extensions/secretary/roles/`，派工走 `secretary_dispatch`；本包只被它调用。
 
 Herdr 没有 `--system-prompt` 通道，所以：
 

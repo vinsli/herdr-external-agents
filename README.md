@@ -4,7 +4,7 @@ Pi 扩展：用一条工具调用把外部编码 agent（`codely` / `codex`）�
 拿到可验收的结果，并在干完时收到通知、自动关 pane。
 
 只解决**调用外部 agent**这一件事：不定义 agent 角色，也不内置任何角色提示词
-（角色由项目 `.pi/agents/` 或 `~/.pi/agent/skills/agent-roles/` 提供）。
+（角色由项目自身提供，例如项目扩展里的 role 注册表）。
 
 ## 提供什么
 
