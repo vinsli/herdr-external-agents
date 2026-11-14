@@ -121,6 +121,23 @@ test("launchCommand passes codely model, effort and approval only when asked", (
   assert.throws(() => launchCommand("codely", { cwd: "/tmp", model: "x; rm -rf /" }), /unsupported model/);
 });
 
+test("launchCommand passes the wire api a codely model needs", () => {
+  // `neo/eco/claude-opus-5-5` is served over Anthropic messages; sending it through
+  // responses is a hard 400 from the gateway, so the caller must be able to say which
+  // wire protocol the backend speaks.
+  assert.equal(
+    launchCommand("codely", { cwd: "/tmp", model: "neo/eco/claude-opus-5-5", wireApi: "messages" }),
+    "cd '/tmp' && PATH=/opt/homebrew/bin:$PATH codely -m neo/eco/claude-opus-5-5 --wire-api messages",
+  );
+  assert.match(
+    launchCommand("codely", { cwd: "/tmp", model: "x", effort: "high", approval: "yolo", wireApi: "chat" }),
+    /--approval-mode yolo --wire-api chat$/,
+  );
+  assert.throws(() => launchCommand("codely", { cwd: "/tmp", wireApi: "grpc" }), /unsupported wire api/);
+  // codex has no wire-api switch: the flag must never leak into its line.
+  assert.doesNotMatch(launchCommand("codex", { cwd: "/tmp", wireApi: "chat" }), /wire-api/);
+});
+
 test("launchCommand lets a role ask codex for a read-only sandbox", () => {
   assert.match(
     launchCommand("codex", { cwd: "/tmp", sandbox: "read-only" }),

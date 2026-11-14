@@ -51,13 +51,23 @@ export function decideWatchEvent(
   entry: WorkerEntry | undefined,
   status: string | null | undefined,
   paneAlive: boolean,
+  observation: { turnRunning?: boolean; elapsedMs?: number; graceMs?: number } = {},
 ): "done" | "blocked" | "pane-gone" | null {
   if (!entry) return null;
   if (!paneAlive) return "pane-gone";
   const started = entry.armed === true || entry.seen?.working === true;
   if (status === "blocked" && !entry.blockedNotified) return "blocked";
   if (status === "idle" || status === "done") {
-    if (started && !entry.notified) return "done";
+    if (!started || entry.notified) return null;
+    // A pane looks idle in the first seconds after the prompt is pasted: the TUI has not
+    // painted its spinner yet, and codely's agent_status is known to sit at "idle" for a
+    // whole turn. Settling on that closes the pane before any output exists (observed live:
+    // started 08:23:09.056, settled "done" 08:23:09.075). Require both "no turn visibly in
+    // flight" and a minimum settle time.
+    if (observation.turnRunning === true) return null;
+    const graceMs = observation.graceMs ?? 5000;
+    if ((observation.elapsedMs ?? Number.POSITIVE_INFINITY) < graceMs) return null;
+    return "done";
   }
   return null;
 }
@@ -133,6 +143,20 @@ function modelFlag(model: string): string {
   }
   return `-m ${model}`;
 }
+const WIRE_APIS = new Set(["chat", "responses", "messages"]);
+
+/**
+ * codely reaches each backend model over exactly one wire API, and a wrong guess is a
+ * hard 400 from the gateway ("Responses compatibility for non-responses providers is
+ * beta-only" for `neo/eco/claude-opus-5-5`). The role registry knows the right value.
+ */
+function wireApiFlag(wireApi: string): string {
+  if (!WIRE_APIS.has(wireApi)) {
+    throw new Error(`unsupported wire api "${wireApi}" (chat|responses|messages)`);
+  }
+  return wireApi;
+}
+
 function effortFlag(effort: string): string {
   if (!EFFORTS.has(effort)) {
     throw new Error(`unsupported reasoning effort "${effort}" (minimal|low|medium|high|xhigh|max)`);
@@ -148,7 +172,14 @@ function effortFlag(effort: string): string {
  */
 export function launchCommand(
   kind: WorkerKind,
-  options: { cwd: string; model?: string; effort?: string; approval?: string; sandbox?: string },
+  options: {
+    cwd: string;
+    model?: string;
+    effort?: string;
+    approval?: string;
+    sandbox?: string;
+    wireApi?: string;
+  },
 ): string {
   const cd = `cd ${shellQuote(options.cwd)} && PATH=/opt/homebrew/bin:$PATH `;
   if (kind === "codely") {
@@ -162,6 +193,7 @@ export function launchCommand(
       }
       parts.push(`--approval-mode ${approval}`);
     }
+    if (options.wireApi) parts.push(`--wire-api ${wireApiFlag(options.wireApi)}`);
     return parts.join(" ");
   }
   if (kind === "codex") {
@@ -414,7 +446,12 @@ export async function watchWorker(run: Runner, pane: string, options: WatchOptio
       if (dirty) writeRegistry(workers, path);
     }
 
-    const event = decideWatchEvent(readRegistry(path)[pane], info.status, alive);
+    const settled = readRegistry(path)[pane];
+    const settling = info.status === "idle" || info.status === "done";
+    const turnRunning =
+      settling && settled?.armed === true && !settled.notified ? await turnVisible(run, pane, options.signal) : false;
+    const elapsedMs = settled?.started ? Date.now() - Date.parse(settled.started) : Number.POSITIVE_INFINITY;
+    const event = decideWatchEvent(settled, info.status, alive, { turnRunning, elapsedMs });
     if (event) {
       const workersNow = readRegistry(path);
       const settled = workersNow[pane];
@@ -581,6 +618,7 @@ export type StartOptions = {
   effort?: string;
   approval?: string;
   sandbox?: string;
+  wireApi?: string;
   autoclose?: boolean;
   keepPrompt?: boolean;
   tabLabel?: string;

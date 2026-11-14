@@ -173,6 +173,12 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
       sandbox: Type.Optional(
         Type.String({ description: "codex sandbox: read-only | workspace-write (default) | danger-full-access" }),
       ),
+      wireApi: Type.Optional(
+        Type.String({
+          description:
+            "codely wire API: chat | responses | messages (omit = codely's own guess; `neo/eco/claude-opus-5-5` needs messages)",
+        }),
+      ),
       noClose: Type.Optional(Type.Boolean({ description: "Keep the pane open after the worker finishes" })),
       keepPrompt: Type.Optional(Type.Boolean({ description: "Launch the agent but do not send a task yet" })),
       createTab: Type.Optional(
@@ -284,6 +290,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         effort: params.effort,
         approval: params.approval,
         sandbox: params.sandbox,
+        wireApi: params.wireApi,
         autoclose: params.noClose ? false : true,
         keepPrompt: params.keepPrompt,
         createTab: params.createTab ?? true,
@@ -308,6 +315,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         kind: result.kind,
         cwd,
         model: params.model ?? null,
+        wireApi: params.wireApi ?? null,
         promptStarted: result.promptStarted,
       });
       startWatch(result.pane, { autoclose: params.noClose ? false : true });
