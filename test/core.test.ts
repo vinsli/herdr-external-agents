@@ -106,6 +106,29 @@ test("launchCommand builds the codex line and rejects injected values", () => {
   assert.throws(() => launchCommand("codex", { cwd: "/tmp", effort: "high; rm" }), /unsupported reasoning effort/);
 });
 
+test("launchCommand passes codely model, effort and approval only when asked", () => {
+  // Bare launch: no injected defaults at all, so the caller can report reality.
+  assert.equal(launchCommand("codely", { cwd: "/tmp" }), "cd '/tmp' && PATH=/opt/homebrew/bin:$PATH codely");
+  assert.equal(
+    launchCommand("codely", { cwd: "/tmp", model: "claude-opus-5-5", effort: "xhigh" }),
+    "cd '/tmp' && PATH=/opt/homebrew/bin:$PATH codely -m claude-opus-5-5 --reasoning_effort xhigh",
+  );
+  assert.equal(
+    launchCommand("codely", { cwd: "/tmp", model: "codely/neo/eco/claude-opus-5-5", approval: "default" }),
+    "cd '/tmp' && PATH=/opt/homebrew/bin:$PATH codely -m codely/neo/eco/claude-opus-5-5 --approval-mode default",
+  );
+  assert.throws(() => launchCommand("codely", { cwd: "/tmp", effort: "turbo" }), /unsupported reasoning effort/);
+  assert.throws(() => launchCommand("codely", { cwd: "/tmp", model: "x; rm -rf /" }), /unsupported model/);
+});
+
+test("launchCommand lets a role ask codex for a read-only sandbox", () => {
+  assert.match(
+    launchCommand("codex", { cwd: "/tmp", sandbox: "read-only" }),
+    /-s read-only -a never/,
+  );
+  assert.throws(() => launchCommand("codex", { cwd: "/tmp", sandbox: "sandbox; rm" }), /unsupported sandbox/);
+});
+
 test("startWorker registers the pane before launching and reports a started turn", async () => {
   const { registry } = freshState();
   const fake = fakeHerdr({ statuses: ["idle", "idle", "working"], registryAtLaunch: () => readRegistry(registry) });

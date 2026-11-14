@@ -163,10 +163,15 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
       router: Type.Optional(
         Type.String({ description: "pi-intercom session to notify on completion (default: this session)" }),
       ),
-      model: Type.Optional(Type.String({ description: "codex model (default gpt-6-sol)" })),
-      effort: Type.Optional(Type.String({ description: "codex reasoning effort (default high)" })),
+      model: Type.Optional(Type.String({ description: "Worker model (codex default gpt-6-sol; codely: pass -m value such as claude-opus-5-5)" })),
+      effort: Type.Optional(
+        Type.String({ description: "Reasoning effort: minimal|low|medium|high|xhigh|max (codex default high; codely omitted unless set)" }),
+      ),
       approval: Type.Optional(
-        Type.String({ description: "codely approval mode: yolo (default) | auto_edit | default" }),
+        Type.String({ description: "codely approval mode: yolo | auto_edit | default (omitted = codely's own default)" }),
+      ),
+      sandbox: Type.Optional(
+        Type.String({ description: "codex sandbox: read-only | workspace-write (default) | danger-full-access" }),
       ),
       noClose: Type.Optional(Type.Boolean({ description: "Keep the pane open after the worker finishes" })),
       keepPrompt: Type.Optional(Type.Boolean({ description: "Launch the agent but do not send a task yet" })),
@@ -278,6 +283,7 @@ export default function herdrExternalAgents(pi: ExtensionAPI) {
         model: params.model,
         effort: params.effort,
         approval: params.approval,
+        sandbox: params.sandbox,
         autoclose: params.noClose ? false : true,
         keepPrompt: params.keepPrompt,
         createTab: params.createTab ?? true,

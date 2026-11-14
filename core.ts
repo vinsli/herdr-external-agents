@@ -120,29 +120,61 @@ export function shellQuote(value: string): string {
 }
 
 const APPROVALS = new Set(["yolo", "auto_edit", "default"]);
+const SANDBOXES = new Set(["read-only", "workspace-write", "danger-full-access"]);
+const EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 
+/**
+ * Model ids reach the shell, so they are restricted to characters real ids use
+ * (`gpt-6-sol`, `claude-opus-5-5`, `codely/neo/eco/claude-opus-5-5`).
+ */
+function modelFlag(model: string): string {
+  if (!/^[A-Za-z0-9._:/+-]+$/.test(model)) {
+    throw new Error(`unsupported model "${model}"`);
+  }
+  return `-m ${model}`;
+}
+function effortFlag(effort: string): string {
+  if (!EFFORTS.has(effort)) {
+    throw new Error(`unsupported reasoning effort "${effort}" (minimal|low|medium|high|xhigh|max)`);
+  }
+  return effort;
+}
+
+/**
+ * Builds the launch line for one worker. Every optional flag is passed only
+ * when the caller asked for it: the caller owns the policy (a role registry) and
+ * must be able to report what actually launched. codely's worker build already
+ * defaults to yolo, so omitting `--approval-mode` keeps the old behaviour.
+ */
 export function launchCommand(
   kind: WorkerKind,
-  options: { cwd: string; model?: string; effort?: string; approval?: string },
+  options: { cwd: string; model?: string; effort?: string; approval?: string; sandbox?: string },
 ): string {
   const cd = `cd ${shellQuote(options.cwd)} && PATH=/opt/homebrew/bin:$PATH `;
   if (kind === "codely") {
-    const approval = options.approval ?? "yolo";
-    if (!APPROVALS.has(approval)) {
-      throw new Error(`unsupported approval mode "${approval}" (yolo|auto_edit|default)`);
+    const parts = [`${cd}codely`];
+    if (options.model) parts.push(modelFlag(options.model));
+    if (options.effort) parts.push(`--reasoning_effort ${effortFlag(options.effort)}`);
+    if (options.approval) {
+      const approval = options.approval;
+      if (!APPROVALS.has(approval)) {
+        throw new Error(`unsupported approval mode "${approval}" (yolo|auto_edit|default)`);
+      }
+      parts.push(`--approval-mode ${approval}`);
     }
-    return `${cd}codely --approval-mode ${approval}`;
+    return parts.join(" ");
   }
   if (kind === "codex") {
-    const effort = options.effort ?? "high";
-    if (!/^[a-z]+$/.test(effort)) {
-      throw new Error(`unsupported reasoning effort "${effort}"`);
-    }
+    const effort = effortFlag(options.effort ?? "high");
     const model = options.model ?? "gpt-6-sol";
     if (!/^[A-Za-z0-9._-]+$/.test(model)) {
       throw new Error(`unsupported model "${model}"`);
     }
-    return `${cd}codex -m ${model} -s workspace-write -a never -c model_reasoning_effort="${effort}"`;
+    const sandbox = options.sandbox ?? "workspace-write";
+    if (!SANDBOXES.has(sandbox)) {
+      throw new Error(`unsupported sandbox "${sandbox}" (read-only|workspace-write|danger-full-access)`);
+    }
+    return `${cd}codex -m ${model} -s ${sandbox} -a never -c model_reasoning_effort="${effort}"`;
   }
   throw new Error(`unsupported kind "${kind}" (codely|codex)`);
 }
@@ -548,6 +580,7 @@ export type StartOptions = {
   model?: string;
   effort?: string;
   approval?: string;
+  sandbox?: string;
   autoclose?: boolean;
   keepPrompt?: boolean;
   tabLabel?: string;
