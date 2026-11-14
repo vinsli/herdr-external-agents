@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.7
+
+- `launchCommand` 支持 `--wire-api <chat|responses|messages>`（仅 codely）：`neo/eco/claude-opus-5-5`
+  的 model-config 把 wireApi 覆盖成 `responses`，网关却只接受 `messages`，裸启动恒定 400
+  `Responses compatibility for non-responses providers is beta-only`。注册表据此声明每个候选。
+- `decideWatchEvent` 不再把「刚起跑的 idle」当完成：除 `armed`/`seen.working` 外还要求
+  pane 里没有正在跑的 turn，且距启动超过 5s 宽限。实测事故：08:23:09.056 启动，
+  08:23:09.075 判 done 并关 pane，codely 随即 `EIO: i/o error, write` 崩在 writeQuitCleanup。
+
 ## 1.1.6
 
 - `resolveWorkspace()` 顺序改为 **pane 的实时位置** → `HERDR_WORKSPACE_ID` → focused。
